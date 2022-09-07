@@ -8,47 +8,6 @@
   )
 
 
-(defn parse [in]
-  (let [[in last] (split in #" :" 2)
-        items (split in #"\s")
-        items (conj items last)
-        items (vec (filter not-empty items))]
-    {:prefix  nil
-     :command :privmsg
-     :args    items
-     })
-  )
-
-(defn ^ServerSocket create-server [port handler]
-  (try (let [server (ServerSocket. port)]
-         (println "Server started")
-         (go-loop []
-           (if-let [_ (try (let [client (.accept server)]
-                             (println "Accepted connection" client)
-                             (let [in (io/reader client)
-                                   out (io/writer client)]
-                               (go-loop []
-                                 (if-let [_ (try
-                                              (handler in out)
-                                              true
-                                              (catch SocketException e
-                                                (println "Closed connection " client))
-                                              (catch Exception e
-                                                (prn e)))]
-                                   (recur))))
-                             true)
-                           (catch SocketException e
-                             (println "Server stopped")))]
-             (recur)))
-         server)
-       (catch BindException e
-         (println "Cannot bind port"))
-       (catch SocketException e
-         (println "Server stopped"))
-       (catch Exception e
-         (prn e))))
-
-
 (defn sread-line [in]
   (binding [*in* in]
     (read-line)))
@@ -69,10 +28,58 @@
     (apply print rest)
     (flush)))
 
+(defn parse [in]
+  (let [in (clojure.string/trim in)
+        [in last] (split in #" :" 2)
+        items (split in #"\s")
+        items (conj items last)
+        items (vec (filter not-empty items))
+        command (first items)
+        items (vec (pop (apply list items)))
+        ]
+    {:prefix  nil
+     :command command
+     :args    items
+     })
+  )
+
+(defn ^ServerSocket create-server [port handler]
+  (try (let [server (ServerSocket. port)]
+         (println "Server started")
+         (go-loop []
+           (if-let [_ (try (let [client (.accept server)]
+                             (println "Accepted connection" client)
+                             (let [in (io/reader client)
+                                   out (io/writer client)]
+                               (go-loop [continue? true]
+                                 (if continue?
+                                   (recur
+                                     (if-let [res (try
+                                                    (handler in out {:client client})
+                                                    (catch SocketException e
+                                                      (println "Closed connection " client))
+                                                    (catch Exception e
+                                                      (prn e)))]
+                                       res
+                                       false)))
+                                 ))
+                             true)
+                           (catch SocketException e
+                             (println "Server stopped")))]
+             (recur)))
+         server)
+       (catch BindException e
+         (println "Cannot bind port"))
+       (catch SocketException e
+         (println "Server stopped"))
+       (catch Exception e
+         (prn e))))
+
+
 (def clients (ref {}))
 (def state (ref {}))
 
-(defn echo [in out]
+(defn echo [in out & {:keys [client]}]
   #_(binding [*in* in
               *out* out]
       (let [input (read-line)]
@@ -80,7 +87,14 @@
         (flush))
       )
   (if-let [input (sread-line in)]
-    (sprn out (parse input))
+    (do
+      (let [action (parse input)]
+        (sprn out action)
+        )
+      true)
+    (do
+      (println (str "Client closed connection: " client))
+      false)
     )
   )
 
