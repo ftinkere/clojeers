@@ -48,10 +48,11 @@
   (apply str prefix " " (-> command clojure.string/upper-case name) " " args)
   )
 
-(defmulti execute :command)
+(defmulti execute (fn [a & _] (:command a)))
 
 (defmethod execute :ping [self state & {:keys [client] :as data}]
-  (swap! state #(assoc % :ping (Date.)))
+  (dosync
+    (alter state #(assoc % :ping (Date.))))
 
   {:prefix ":server"
    :command :pong
@@ -106,7 +107,7 @@
   (if-let [input (sread-line in)]
     (do
       (let [action (parse input)]
-        (sprn out (respond (apply execute action state data)))
+        (sprn out (respond (apply execute action state (into [] cat data))))
         )
       true)
     (do
