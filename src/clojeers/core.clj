@@ -1,7 +1,7 @@
 (ns clojeers.core
   (:import (java.io InputStreamReader BufferedReader OutputStreamWriter)
            (java.net ServerSocket Socket BindException SocketException)
-           )
+           (java.util Date))
   (:require [clojure.java.io :as io]
             [clojure.core.async :refer [go-loop]]
             [clojure.string :refer [split]])
@@ -33,15 +33,32 @@
         [in last] (split in #" :" 2)
         items (split in #"\s")
         items (conj items last)
-        items (vec (filter not-empty items))
+        items (apply list (filter not-empty items))
+        [prefix items] (if (= (first (first items)) \:) [(first items) (pop items)] [nil items])
         command (first items)
-        items (vec (pop (apply list items)))
+        items (vec (pop items))
         ]
-    {:prefix  nil
-     :command command
+    {:prefix  prefix
+     :command (-> command clojure.string/lower-case keyword)
      :args    items
      })
   )
+
+(defn respond [{:keys [prefix command args]}]
+  (apply str prefix " " (-> command clojure.string/upper-case name) " " args)
+  )
+
+(defmulti execute :command)
+
+(defmethod execute :ping [self state & {:keys [client] :as data}]
+  (swap! state #(assoc % :ping (Date.)))
+
+  {:prefix ":server"
+   :command :pong
+   :args [(-> self :args first)]
+   }
+  )
+
 
 (defn ^ServerSocket create-server [port handler]
   (try (let [server (ServerSocket. port)]
@@ -79,7 +96,7 @@
 (def clients (ref {}))
 (def state (ref {}))
 
-(defn echo [in out & {:keys [client]}]
+(defn echo [in out & {:keys [client] :as data}]
   #_(binding [*in* in
               *out* out]
       (let [input (read-line)]
@@ -89,7 +106,7 @@
   (if-let [input (sread-line in)]
     (do
       (let [action (parse input)]
-        (sprn out action)
+        (sprn out (respond (apply execute action state data)))
         )
       true)
     (do
